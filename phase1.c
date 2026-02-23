@@ -19,8 +19,13 @@ typedef struct {
 // Global shared array - THIS CAUSES RACE CONDITIONS!
 Account accounts[NUM_ACCOUNTS];
 
+// Global shared adjustment probably also causes race conditions, but since thats the point of this phase
+// I assume I can ignore it?
+double adjustment = 0.0;
+
+//Both functions below were modified to keep track of deposits and withdrawals to make the final count work
 // GIVEN: Example deposit function WITH race condition
-void deposit_unsafe(int account_id, double amount) {
+double deposit_unsafe(int account_id, double amount) {
     // READ
     double current_balance = accounts[account_id].balance;
 
@@ -31,12 +36,14 @@ void deposit_unsafe(int account_id, double amount) {
     //WRITE (another thread might have changed balance between READ and WRITE!)
     accounts[account_id].balance = new_balance;
     accounts[account_id].transaction_count++;
+
+    return amount;
 }
 
 //TODO 1: Implement withdrawal_unsage() following the same pattern
 //Reference: Copy the structure of deposit_unsafe() above
 //Question: What's different between deposit and withdrawal?
-void withdrawal_unsafe(int account_id, double amount) {
+double withdrawal_unsafe(int account_id, double amount) {
     double current_balance = accounts[account_id].balance;
 
     usleep(1);
@@ -45,6 +52,8 @@ void withdrawal_unsafe(int account_id, double amount) {
 
     accounts[account_id].balance = new_balance;
     accounts[account_id].transaction_count++;
+
+    return amount;
 }
 
 //TODO 2: Implement the thread function
@@ -72,11 +81,12 @@ void* teller_thread(void* arg) {
 
         //TODO 2e: Call the appropriate function
         if (operation == 1) {
-            deposit_unsafe(account_idx, amount);
+            //transfering
+            adjustment -= deposit_unsafe(account_idx, amount);
             printf("Teller %d: Deposited $%.2f to Account %d\n", teller_id, amount, account_idx);
         }
         else {
-            withdrawal_unsafe(account_idx, amount);
+            adjustment += withdrawal_unsafe(account_idx, amount);
             printf("Teller %d: Withdrew $%.2f from Account %d\n", teller_id, amount, account_idx);
         }
         
@@ -87,6 +97,11 @@ void* teller_thread(void* arg) {
 //TODO 3: Implement main function
 //Reference: See pthread_create and pthread_join man pages
 int main() {
+
+    //timing stuff from phase 2
+    struct timespec start, end;;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     printf("=== Phase 1: Race Conditions Demo ===\n\n");
 
     //TODO 3a: Initialize all accounts
@@ -116,7 +131,7 @@ int main() {
     //TODO 3c: Create thread and thread ID arrays
     //Reference man pthread_create for pthread_t type
     pthread_t threads[NUM_THREADS];
-    int thread_ids[NUM_THREADS];;   //GIVEN: Seperate array for IDs
+    int thread_ids[NUM_THREADS];;   //GIVEN: Separate array for IDs
 
     //TODO 3d: Create all threads
     //Reference: man pthread_create
@@ -146,17 +161,22 @@ int main() {
         actual_total += accounts[i].balance;
     }
 
-    printf("\nExpected Total: $%.2f\n", expected_total);
+    printf("\nExpected Total: $%.2f\n", (expected_total + adjustment));
     printf("Actual Total:   $%.2f\n", actual_total);
-    printf("Difference:     $%.2f\n", actual_total - expected_total);
+    printf("Difference:     $%.2f\n", actual_total - expected_total + adjustment);
 
     //TODO 3g: Add race condition detection message
     //IF expected != actual, print "RACE CONDITION DETECTED!"
     //Instruct user to run multiple times
 
-    if (actual_total != expected_total) {
+    if (actual_total != expected_total + adjustment ) {
         printf("\nRACE CONDITION DETECTED!\n");
     }
+
+    //more phase 2 timing stuff
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double elapsed_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    printf("Time: %.4f seconds\n", elapsed_time);
 
     return 0;
 }
