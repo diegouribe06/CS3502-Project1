@@ -14,6 +14,8 @@
 typedef struct {
     int account_id;
     double balance;
+    //added to keep track of deposits and withdrawals
+    double adjustment;
     int transaction_count;
     pthread_mutex_t lock; // NEW: Mutex for this account
 } Account;
@@ -21,20 +23,13 @@ typedef struct {
 // Global shared array
 Account accounts[NUM_ACCOUNTS];
 
-//Global shared adjustment
-//im assuming this lock is going to create a bottleneck since all of the threads will be
-//waiting on this one variable, but the point of this phase is to show synchronization
-//and it's costs so im gonna pretend this isn't an issue
-pthread_mutex_t adjustment_lock;
-
-double adjustment = 0.0;
-
 // GIVEN: Example of mutex initialization
 void initialize_accounts() {
     for (int i = 0; i < NUM_ACCOUNTS; i++) {
         accounts[i].account_id = i;
         accounts[i].balance = INITIAL_BALANCE;
         accounts[i].transaction_count = 0;
+        accounts[i].adjustment = 0.0;
 
         // Initialize the mutex
         pthread_mutex_init(&accounts[i].lock, NULL);
@@ -50,14 +45,11 @@ void deposit_safe(int account_id, double amount) {
     // Only ONE thread can execute this at a time for this account
     accounts[account_id].balance += amount;
     accounts[account_id].transaction_count++;
+    accounts[account_id].adjustment += amount; // Track total deposits for this account
     // ============================
 
     // Release lock AFTER modifying shared data
     pthread_mutex_unlock(&accounts[account_id].lock);
-
-    pthread_mutex_lock(&adjustment_lock);
-    adjustment += amount;
-    pthread_mutex_unlock(&adjustment_lock);
 }
 
 // TODO 1: Implement withdrawal_safe() with mutex protection
@@ -73,13 +65,10 @@ void withdrawal_safe(int account_id, double amount) {
     //critical section
     accounts[account_id].balance -= amount;
     accounts[account_id].transaction_count++;
+    accounts[account_id].adjustment -= amount; // Track total withdrawals for this account
 
     //release the lock
     pthread_mutex_unlock(&accounts[account_id].lock);
-
-    pthread_mutex_lock(&adjustment_lock);
-    adjustment -= amount;
-    pthread_mutex_unlock(&adjustment_lock);
 
 }
 
@@ -139,8 +128,6 @@ void cleanup_mutexes() {
 // Document the overhead of synchronization
 
 int main() {
-    pthread_mutex_init(&adjustment_lock, NULL); // Initialize the mutex for adjustment
-
     // YOUR CODE HERE - Copy from Phase 1 and modify:
     // 1. Call initialize_accounts() instead of manual initialization
     // 2. Add performance timing (TODO 3)
@@ -163,7 +150,7 @@ int main() {
     //Hint: Total money in system should remain constant!
     double expected_total = INITIAL_BALANCE * NUM_ACCOUNTS;
 
-    printf("\nExpected total: $%.2f\n\n", expected_total);
+    printf("\nExpected total (without adjustment): $%.2f\n\n", expected_total);
 
     //TODO 3c: Create thread and thread ID arrays
     //Reference man pthread_create for pthread_t type
@@ -198,17 +185,18 @@ int main() {
     for (int i = 0; i < NUM_ACCOUNTS; i++) {
         printf("Account %d: $%.2f (%d transactions)\n", i, accounts[i].balance, accounts[i].transaction_count);
         actual_total += accounts[i].balance;
+        expected_total += accounts[i].adjustment; // Adjust expected total based on deposits/withdrawals
     }
 
-    printf("\nExpected Total: $%.2f\n", expected_total + adjustment); // Adjust expected total based on global adjustment
+    printf("\nExpected Total: $%.2f\n", expected_total); // Adjust expected total based on global adjustment
     printf("Actual Total:   $%.2f\n", actual_total);
-    printf("Difference:     $%.2f\n", actual_total - expected_total + adjustment);
+    printf("Difference:     $%.2f\n", actual_total - expected_total);
 
     //TODO 3g: Add race condition detection message
     //IF expected != actual, print "RACE CONDITION DETECTED!"
     //Instruct user to run multiple times
 
-    if (actual_total != expected_total + adjustment ) {
+    if (actual_total != expected_total) {
         printf("\nRACE CONDITION DETECTED!\n");
     }
 

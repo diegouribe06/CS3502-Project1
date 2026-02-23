@@ -13,15 +13,12 @@
 typedef struct {
     int account_id ;
     double balance ;
+    double adjustment; //added to keep track of deposits and withdrawals
     int transaction_count ;
 } Account;
 
 // Global shared array - THIS CAUSES RACE CONDITIONS!
 Account accounts[NUM_ACCOUNTS];
-
-// Global shared adjustment probably also causes race conditions, but since thats the point of this phase
-// I assume I can ignore it?
-double adjustment = 0.0;
 
 //Both functions below were modified to keep track of deposits and withdrawals to make the final count work
 // GIVEN: Example deposit function WITH race condition
@@ -30,12 +27,16 @@ double deposit_unsafe(int account_id, double amount) {
     double current_balance = accounts[account_id].balance;
 
     // MODIFY (simulate processing time)
-    usleep(1);
+    //commenting out the sleep to see the actual difference between run times in phase 1 and 2
+    //currently the sleep is making phase 1 appear to run for a longer time
+    //which makes phase 2 look faster even though it has the overhead of locking
+    //usleep(1);
     double new_balance = current_balance + amount;
 
     //WRITE (another thread might have changed balance between READ and WRITE!)
     accounts[account_id].balance = new_balance;
     accounts[account_id].transaction_count++;
+    accounts[account_id].adjustment += amount; // Track total deposits for this account
 
     return amount;
 }
@@ -46,12 +47,14 @@ double deposit_unsafe(int account_id, double amount) {
 double withdrawal_unsafe(int account_id, double amount) {
     double current_balance = accounts[account_id].balance;
 
-    usleep(1);
+    //commented for same reason as in deposit
+    //usleep(1);
     //same as deposit but subtract instead
     double new_balance = current_balance - amount;
 
     accounts[account_id].balance = new_balance;
     accounts[account_id].transaction_count++;
+    accounts[account_id].adjustment -= amount; // Track total withdrawals for this account
 
     return amount;
 }
@@ -81,12 +84,11 @@ void* teller_thread(void* arg) {
 
         //TODO 2e: Call the appropriate function
         if (operation == 1) {
-            //transfering
-            adjustment -= deposit_unsafe(account_idx, amount);
+            deposit_unsafe(account_idx, amount);
             printf("Teller %d: Deposited $%.2f to Account %d\n", teller_id, amount, account_idx);
         }
         else {
-            adjustment += withdrawal_unsafe(account_idx, amount);
+            withdrawal_unsafe(account_idx, amount);
             printf("Teller %d: Withdrew $%.2f from Account %d\n", teller_id, amount, account_idx);
         }
         
@@ -113,6 +115,7 @@ int main() {
         accounts[i].account_id = i;
         accounts[i].balance = INITIAL_BALANCE;
         accounts[i].transaction_count = 0;
+        accounts[i].adjustment = 0.0;
     }
 
     //Display initial state (GIVEN)
@@ -126,7 +129,7 @@ int main() {
     //Hint: Total money in system should remain constant!
     double expected_total = INITIAL_BALANCE * NUM_ACCOUNTS;
 
-    printf("\nExpected total: $%.2f\n\n", expected_total);
+    printf("\nExpected total (without adjustment): $%.2f\n\n", expected_total);
 
     //TODO 3c: Create thread and thread ID arrays
     //Reference man pthread_create for pthread_t type
@@ -148,7 +151,7 @@ int main() {
     //Reference: man pthread_join
     //Question: What happens if you skip this step?
     for (int i = 0; i < NUM_THREADS; i++) {
-        //YOUR pthread_join CODE HERE
+        //YOUR pthradjustmentead_join CODE HERE
         pthread_join(threads[i], NULL);
     }
 
@@ -159,17 +162,18 @@ int main() {
     for (int i = 0; i < NUM_ACCOUNTS; i++) {
         printf("Account %d: $%.2f (%d transactions)\n", i, accounts[i].balance, accounts[i].transaction_count);
         actual_total += accounts[i].balance;
+        expected_total += accounts[i].adjustment; // Adjust expected total based on deposits/withdrawals
     }
 
-    printf("\nExpected Total: $%.2f\n", (expected_total + adjustment));
+    printf("\nExpected Total: $%.2f\n", (expected_total));
     printf("Actual Total:   $%.2f\n", actual_total);
-    printf("Difference:     $%.2f\n", actual_total - expected_total + adjustment);
+    printf("Difference:     $%.2f\n", actual_total - expected_total);
 
     //TODO 3g: Add race condition detection message
     //IF expected != actual, print "RACE CONDITION DETECTED!"
     //Instruct user to run multiple times
 
-    if (actual_total != expected_total + adjustment ) {
+    if (actual_total != expected_total) {
         printf("\nRACE CONDITION DETECTED!\n");
     }
 
