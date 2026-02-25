@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+//for error codes
+#include <errno.h>
 
 // Configuration - experiment with different values
 #define NUM_ACCOUNTS 2
@@ -14,8 +16,6 @@
 typedef struct {
     int account_id;
     double balance;
-    //added to keep track of deposits and withdrawals
-    double adjustment;
     int transaction_count;
     pthread_mutex_t lock; // NEW: Mutex for this account
 } Account;
@@ -29,52 +29,55 @@ void initialize_accounts() {
         accounts[i].account_id = i;
         accounts[i].balance = INITIAL_BALANCE;
         accounts[i].transaction_count = 0;
-        accounts[i].adjustment = 0.0;
 
         // Initialize the mutex
         pthread_mutex_init(&accounts[i].lock, NULL);
     }
 }
 
-// GIVEN: Example deposit function WITH proper protection
-void deposit_safe(int account_id, double amount) {
-    // Acquire lock BEFORE accessing shared data
-    pthread_mutex_lock(&accounts[account_id].lock);
+int transfer(double amount, int from, int to) {
+    //timer stuff for deadlock detection
+    struct timespec deadlockTimer;
+    clock_gettime(CLOCK_REALTIME, &deadlockTimer);
+    deadlockTimer.tv_sec += 5; // Set timeout for 5 seconds
+    int rc;
 
-    // ===== CRITICAL SECTION =====
-    // Only ONE thread can execute this at a time for this account
-    accounts[account_id].balance += amount;
-    accounts[account_id].transaction_count++;
-    accounts[account_id].adjustment += amount; // Track total deposits for this account
-    // ============================
+    //get the lock for the from acct
+    pthread_mutex_lock(&accounts[from].lock);
+    //make sure the acct has sufficient funds
+    if (accounts[from].balance < amount) {
+        pthread_mutex_unlock(&accounts[from].lock);
+        return -1; // Insufficient funds
+    }
+    //simulating higher processing time
+    //i think it is necessary to make sure the deadlock is more likely to occur
+    usleep(100);
 
-    // Release lock AFTER modifying shared data
-    pthread_mutex_unlock(&accounts[account_id].lock);
+    //get the lock for the to acct
+    rc = pthread_mutex_timedlock(&accounts[to].lock, &deadlockTimer);
+    if (rc == ETIMEDOUT) {
+        // Deadlock detected, release the first lock and return error
+        pthread_mutex_unlock(&accounts[from].lock);
+        return -2; // error code for deadlock
+    }
+    else if (rc != 0) {
+        // Some other error occurred
+        pthread_mutex_unlock(&accounts[from].lock);
+        return -3; // error code for other mutex error
+    }
+
+    accounts[from].balance -= amount;
+    accounts[from].transaction_count++;
+    accounts[to].balance += amount;
+    accounts[to].transaction_count++;
+
+    //unlock both accounts
+    pthread_mutex_unlock(&accounts[from].lock);
+    pthread_mutex_unlock(&accounts[to].lock);
+    return 0;
 }
 
-// TODO 1: Implement withdrawal_safe() with mutex protection
-// Reference: Follow the pattern of deposit_safe() above
-// Remember: lock BEFORE accessing data, unlock AFTER
-void withdrawal_safe(int account_id, double amount) {
-    // YOUR CODE HERE
-    // Hint: pthread_mutex_lock
-    // Hint: Modify balance
-    // Hint: pthread_mutex_unlock
-    pthread_mutex_lock(&accounts[account_id].lock);
 
-    //critical section
-    accounts[account_id].balance -= amount;
-    accounts[account_id].transaction_count++;
-    accounts[account_id].adjustment -= amount; // Track total withdrawals for this account
-
-    //release the lock
-    pthread_mutex_unlock(&accounts[account_id].lock);
-
-}
-
-// TODO 2: Update teller_thread to use safe functions
-// Change: deposit_unsafe -> deposit_safe
-// Change: withdrawal_unsafe -> withdrawal_safe
 void* teller_thread(void* arg) {
     // YOUR CODE HERE - Copy from Phase 1 and modify to use safe functions
     int teller_id = *(int*)arg; //GIVEN: Extract thread ID
@@ -87,23 +90,28 @@ void* teller_thread(void* arg) {
     for (int i = 0; i < TRANSACTIONS_PER_THREAD; i++) {
         //TODO 2b: Randomly select an account (0 to NUM_ACCOUNTS-1)
         //Hint: User rand_r(&seed) % NUM_ACCOUNTS
-        int account_idx = rand_r(&seed) % NUM_ACCOUNTS;
+        int account_idx, account_idy;
+        do {
+            account_idx = rand_r(&seed) % NUM_ACCOUNTS;
+            account_idy = rand_r(&seed) % NUM_ACCOUNTS;
+        } while (account_idx == account_idy); // Ensure different accounts for transfer
+
 
         //TODO 2c: Generate random amount (1-100)
         double amount = 1.0 + (rand_r(&seed) % 100);
 
-        //TODO 2d: Randomly choos deposit (1) or withdrawal (0)
-        //Hint: rand_r(&seed) % 2
-        int operation = rand_r(&seed) % 2;
-
-        //TODO 2e: Call the appropriate function
-        if (operation == 1) {
-            deposit_safe(account_idx, amount);
-            printf("Teller %d: Deposited $%.2f to Account %d\n", teller_id, amount, account_idx);
+        int transfer_result = transfer(amount, account_idx, account_idy);
+        if (transfer_result == -1) {
+            printf("\nAccount %d has insufficient funds for transfer of $%.2f to Account %d\n", account_idx, amount, account_idy);
+        }
+        else if (transfer_result == -2) {
+            printf("\nTeller %d: Deadlock detected during transfer of $%.2f from Account %d to Account %d. Transaction aborted.\n", teller_id, amount, account_idx, account_idy);
+        }
+        else if (transfer_result == -3) {
+            printf("\nTeller %d: Mutex error during transfer of $%.2f from Account %d to Account %d. Transaction aborted.\n", teller_id, amount, account_idx, account_idy);
         }
         else {
-            withdrawal_safe(account_idx, amount);
-            printf("Teller %d: Withdrew $%.2f from Account %d\n", teller_id, amount, account_idx);
+            printf("Teller %d: Transferred $%.2f from Account %d to Account %d\n", teller_id, amount, account_idx, account_idy);
         }
 
     }
@@ -134,7 +142,7 @@ int main() {
     // 3. Call cleanup_mutexes() before returning (TODO 4)
     struct timespec start, end;;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    printf("=== Phase 2: Mutex Demo ===\n\n");
+    printf("=== Phase 3: Deadlock Demo ===\n\n");
 
     //TODO 3a: Initialize all accounts
     initialize_accounts();
@@ -185,7 +193,6 @@ int main() {
     for (int i = 0; i < NUM_ACCOUNTS; i++) {
         printf("Account %d: $%.2f (%d transactions)\n", i, accounts[i].balance, accounts[i].transaction_count);
         actual_total += accounts[i].balance;
-        expected_total += accounts[i].adjustment; // Adjust expected total based on deposits/withdrawals
     }
 
     printf("\nExpected Total: $%.2f\n", expected_total); // Adjust expected total based on global adjustment
@@ -196,15 +203,9 @@ int main() {
     //IF expected != actual, print "RACE CONDITION DETECTED!"
     //Instruct user to run multiple times
 
-    if (actual_total != expected_total) {
-        printf("\nRACE CONDITION DETECTED!\n");
-    }
-
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
     printf("Time: %.4f seconds\n", elapsed_time);
-
-    cleanup_mutexes();
 
     return 0;
 }
