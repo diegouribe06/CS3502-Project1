@@ -42,37 +42,43 @@ int safe_transfer(double amount, int from, int to) {
     deadlockTimer.tv_sec += 5; // Set timeout for 5 seconds
     int rc;
 
-    //get the lock for the from acct - use timedlock to detect circular wait
-    rc = pthread_mutex_timedlock(&accounts[from].lock, &deadlockTimer);
-    if (rc == ETIMEDOUT) {
-        return -2; // error code for deadlock on first lock
+    int first = from < to ? from : to; // Lock lower ID first to reduce deadlock chance
+
+    if (first == from) {
+        pthread_mutex_lock(&accounts[from].lock);
+        if (accounts[from].balance < amount) {
+            pthread_mutex_unlock(&accounts[from].lock);
+            return -1; // Insufficient funds
+        }
+
+        rc = pthread_mutex_timedlock(&accounts[to].lock, &deadlockTimer);
+        if (rc == ETIMEDOUT) {
+            // Deadlock detected, release the first lock and return error
+            pthread_mutex_unlock(&accounts[from].lock);
+            return -2; // error code for deadlock
+        }
+        else if (rc != 0) {
+            // Some other error occurred
+            pthread_mutex_unlock(&accounts[from].lock);
+            return -3; // error code for other mutex error
+        }
     }
-    else if (rc != 0) {
-        return -3; // error code for other mutex error
+    else {
+        pthread_mutex_lock(&accounts[to].lock);
+        rc = pthread_mutex_timedlock(&accounts[from].lock, &deadlockTimer);
+        if (rc == ETIMEDOUT) {
+            // Deadlock detected, release the first lock and return error
+            pthread_mutex_unlock(&accounts[to].lock);
+            return -2; // error code for deadlock
+        }
+        else if (rc != 0) {
+            // Some other error occurred
+            pthread_mutex_unlock(&accounts[to].lock);
+            return -3; // error code for other mutex error
+        }
     }
 
-    //make sure the acct has sufficient funds
-    if (accounts[from].balance < amount) {
-        pthread_mutex_unlock(&accounts[from].lock);
-        return -1; // Insufficient funds
-    }
-    //simulating higher processing time
-    //i think it is necessary to make sure the deadlock is more likely to occur
-    usleep(100);
-
-    //get the lock for the to acct
-    rc = pthread_mutex_timedlock(&accounts[to].lock, &deadlockTimer);
-    if (rc == ETIMEDOUT) {
-        // Deadlock detected, release the first lock and return error
-        pthread_mutex_unlock(&accounts[from].lock);
-        return -2; // error code for deadlock
-    }
-    else if (rc != 0) {
-        // Some other error occurred
-        pthread_mutex_unlock(&accounts[from].lock);
-        return -3; // error code for other mutex error
-    }
-
+    //complete operations only when both locks have been held successfully
     accounts[from].balance -= amount;
     accounts[from].transaction_count++;
     accounts[to].balance += amount;

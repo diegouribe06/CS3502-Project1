@@ -13,12 +13,13 @@
 typedef struct {
     int account_id ;
     double balance ;
-    double adjustment; //added to keep track of deposits and withdrawals
     int transaction_count ;
 } Account;
 
 // Global shared array - THIS CAUSES RACE CONDITIONS!
 Account accounts[NUM_ACCOUNTS];
+int adjustment = 0; //also decided to use another global varianble to keep track of depostis and withdrawals
+//it causes more race conditions, but since that's the point of this phase i'm assuming it's fine
 
 //Both functions below were modified to keep track of deposits and withdrawals to make the final count work
 // GIVEN: Example deposit function WITH race condition
@@ -27,16 +28,13 @@ double deposit_unsafe(int account_id, double amount) {
     double current_balance = accounts[account_id].balance;
 
     // MODIFY (simulate processing time)
-    //commenting out the sleep to see the actual difference between run times in phase 1 and 2
-    //currently the sleep is making phase 1 appear to run for a longer time
-    //which makes phase 2 look faster even though it has the overhead of locking
-    //usleep(1);
+    usleep(1);
     double new_balance = current_balance + amount;
 
     //WRITE (another thread might have changed balance between READ and WRITE!)
     accounts[account_id].balance = new_balance;
     accounts[account_id].transaction_count++;
-    accounts[account_id].adjustment += amount; // Track total deposits for this account
+    adjustment += amount; // Track total deposits for this account
 
     return amount;
 }
@@ -47,14 +45,12 @@ double deposit_unsafe(int account_id, double amount) {
 double withdrawal_unsafe(int account_id, double amount) {
     double current_balance = accounts[account_id].balance;
 
-    //commented for same reason as in deposit
-    //usleep(1);
-    //same as deposit but subtract instead
+    usleep(1);
     double new_balance = current_balance - amount;
 
     accounts[account_id].balance = new_balance;
     accounts[account_id].transaction_count++;
-    accounts[account_id].adjustment -= amount; // Track total withdrawals for this account
+    adjustment -= amount; // Track total withdrawals for this account
 
     return amount;
 }
@@ -115,7 +111,6 @@ int main() {
         accounts[i].account_id = i;
         accounts[i].balance = INITIAL_BALANCE;
         accounts[i].transaction_count = 0;
-        accounts[i].adjustment = 0.0;
     }
 
     //Display initial state (GIVEN)
@@ -143,7 +138,10 @@ int main() {
         thread_ids[i] = i;
         //YOUR pthread_create CODE HERE
         //FORMAT: pthread_create(&threads[i], NULL, teller_thread, &thread_ids[i]);
-        pthread_create(&threads[i], NULL, teller_thread, &thread_ids[i]);
+        if (pthread_create(&threads[i], NULL, teller_thread, &thread_ids[i]) != 0) {
+            perror("Failed to create thread");
+            exit(EXIT_FAILURE);
+        }
 
     }
 
@@ -155,17 +153,17 @@ int main() {
         pthread_join(threads[i], NULL);
     }
 
+
     //TODO 3f: Calculate and display results
     printf("\n=== Final Results ===\n");
-    double actual_total = 0.0;
+    double actual_total = adjustment;
 
     for (int i = 0; i < NUM_ACCOUNTS; i++) {
         printf("Account %d: $%.2f (%d transactions)\n", i, accounts[i].balance, accounts[i].transaction_count);
         actual_total += accounts[i].balance;
-        expected_total += accounts[i].adjustment; // Adjust expected total based on deposits/withdrawals
     }
 
-    printf("\nExpected Total: $%.2f\n", (expected_total));
+    printf("\nExpected Total: $%.2f\n", expected_total);
     printf("Actual Total:   $%.2f\n", actual_total);
     printf("Difference:     $%.2f\n", actual_total - expected_total);
 

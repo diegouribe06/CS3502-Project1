@@ -164,8 +164,10 @@ int main() {
         thread_ids[i] = i;
         //YOUR pthread_create CODE HERE
         //FORMAT: pthread_create(&threads[i], NULL, teller_thread, &thread_ids[i]);
-        pthread_create(&threads[i], NULL, teller_thread, &thread_ids[i]);
-
+        if (pthread_create(&threads[i], NULL, teller_thread, &thread_ids[i]) != 0) {
+            perror("Failed to create thread");
+            exit(EXIT_FAILURE);
+        }
     }
 
     //TODO 3e: Wait for all threads to complete
