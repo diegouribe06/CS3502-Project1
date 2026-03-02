@@ -84,9 +84,14 @@ int safe_transfer(double amount, int from, int to) {
     accounts[to].balance += amount;
     accounts[to].transaction_count++;
 
-    //unlock both accounts
-    pthread_mutex_unlock(&accounts[from].lock);
-    pthread_mutex_unlock(&accounts[to].lock);
+    //unlock in reverse order of locking
+    if (first == from) {
+        pthread_mutex_unlock(&accounts[to].lock);
+        pthread_mutex_unlock(&accounts[from].lock);
+    }else {
+        pthread_mutex_unlock(&accounts[from].lock);
+        pthread_mutex_unlock(&accounts[to].lock);
+    }
     return 0;
 }
 
