@@ -18,7 +18,7 @@ typedef struct {
 
 // Global shared array - THIS CAUSES RACE CONDITIONS!
 Account accounts[NUM_ACCOUNTS];
-int adjustment = 0; //also decided to use another global varianble to keep track of depostis and withdrawals
+double adjustments[NUM_ACCOUNTS]; //global array to keep track of deposits and withdrawals per account
 //it causes more race conditions, but since that's the point of this phase i'm assuming it's fine
 
 //Both functions below were modified to keep track of deposits and withdrawals to make the final count work
@@ -28,13 +28,13 @@ double deposit_unsafe(int account_id, double amount) {
     double current_balance = accounts[account_id].balance;
 
     // MODIFY (simulate processing time)
-    usleep(1);
+    //usleep(1);
     double new_balance = current_balance + amount;
 
     //WRITE (another thread might have changed balance between READ and WRITE!)
     accounts[account_id].balance = new_balance;
     accounts[account_id].transaction_count++;
-    adjustment += amount; // Track total deposits for this account
+    adjustments[account_id] += amount; // Track total deposits for this account
 
     return amount;
 }
@@ -45,12 +45,12 @@ double deposit_unsafe(int account_id, double amount) {
 double withdrawal_unsafe(int account_id, double amount) {
     double current_balance = accounts[account_id].balance;
 
-    usleep(1);
+    //usleep(1);
     double new_balance = current_balance - amount;
 
     accounts[account_id].balance = new_balance;
     accounts[account_id].transaction_count++;
-    adjustment -= amount; // Track total withdrawals for this account
+    adjustments[account_id] -= amount; // Track total withdrawals for this account
 
     return amount;
 }
@@ -111,6 +111,7 @@ int main() {
         accounts[i].account_id = i;
         accounts[i].balance = INITIAL_BALANCE;
         accounts[i].transaction_count = 0;
+        adjustments[i] = 0.0; // Initialize adjustments tracking
     }
 
     //Display initial state (GIVEN)
@@ -156,15 +157,22 @@ int main() {
 
     //TODO 3f: Calculate and display results
     printf("\n=== Final Results ===\n");
-    double actual_total = adjustment;
+    double actual_total = 0;
 
     for (int i = 0; i < NUM_ACCOUNTS; i++) {
         printf("Account %d: $%.2f (%d transactions)\n", i, accounts[i].balance, accounts[i].transaction_count);
         actual_total += accounts[i].balance;
     }
 
+    // Calculate total adjustments from all accounts
+    double total_adjustments = 0;
+    for (int i = 0; i < NUM_ACCOUNTS; i++) {
+        total_adjustments += adjustments[i];
+    }
+
     printf("\nExpected Total: $%.2f\n", expected_total);
     printf("Actual Total:   $%.2f\n", actual_total);
+    printf("Total Adjustments: $%.2f\n", total_adjustments);
     printf("Difference:     $%.2f\n", actual_total - expected_total);
 
     //TODO 3g: Add race condition detection message
